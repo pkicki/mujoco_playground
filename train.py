@@ -52,8 +52,8 @@ def main(
     # 2. Initialize Weights & Biases
     wandb.init(
         project=f"mujoco-playground-{env_name}",
-        name=run_name,
-        group=run_name + f"_seed{seed}",
+        name=run_name + f"_seed{seed}",
+        group=run_name,
         config={
             "env_config": env_cfg.to_dict(),
             "ppo_config": ppo_config.to_dict(),
