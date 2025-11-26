@@ -41,8 +41,7 @@ def main(
     ppo_config.seed = seed
     
     # Create a unique experiment name
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_name = f"{env_name}_{noise_type}_{timestamp}"
+    run_name = f"{env_name}_{noise_type}"
     log_dir = os.path.join(os.path.dirname(__file__), "logs", run_name)
     ckpt_dir = os.path.join(log_dir, "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
