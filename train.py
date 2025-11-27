@@ -41,19 +41,19 @@ def main(
     ppo_config.seed = seed
     
     # Create a unique experiment name
-    run_name = f"{env_name}_{noise_type}"
-    log_dir = os.path.join(os.path.dirname(__file__), "logs", run_name)
-    ckpt_dir = os.path.join(log_dir, "checkpoints")
+    group_name = f"{env_name}_{noise_type}"
+    run_name = f"{group_name}_seed{seed}"
+    ckpt_dir = os.path.join(os.path.dirname(__file__), "checkpoints", run_name)
     os.makedirs(ckpt_dir, exist_ok=True)
 
     print(f"Starting training run: {run_name}")
-    print(f"Logs directory: {log_dir}")
+    print(f"Checkpoints directory: {ckpt_dir}")
 
     # 2. Initialize Weights & Biases
     wandb.init(
         project=f"mujoco-playground-{env_name}",
-        name=run_name + f"_seed{seed}",
-        group=run_name,
+        name=run_name,
+        group=group_name,
         config={
             "env_config": env_cfg.to_dict(),
             "ppo_config": ppo_config.to_dict(),
