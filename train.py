@@ -17,6 +17,8 @@ from flax.training import orbax_utils
 
 from brax.training.agents.ppo import networks as ppo_networks
 from brax.training.agents.ppo import train as ppo
+from brax.training.acting import generate_unroll
+from brax.training.acting_statefully import generate_stateful_unroll
 
 from mujoco_playground import registry
 from mujoco_playground import wrapper
@@ -26,7 +28,10 @@ from experiment_launcher import single_experiment, run_experiment
 
 @single_experiment
 def main(
-    noise_type: str = "white",
+    #noise_type: str = "white",
+    noise_type: str = "lp",
+    cutoff_freq: float = 3.0,
+    order: int = 2,
     env_name: str = "Go1JoystickFlatTerrain",
     results_dir: str = "./results",
     seed: int = 1,
@@ -42,6 +47,8 @@ def main(
     
     # Create a unique experiment name
     group_name = f"{env_name}_{noise_type}"
+    if noise_type == "lp":
+        group_name += f"_cf{cutoff_freq}_o{order}"
     run_name = f"{group_name}_seed{seed}"
     ckpt_dir = os.path.join(os.path.dirname(__file__), "checkpoints", run_name)
     os.makedirs(ckpt_dir, exist_ok=True)
@@ -70,6 +77,13 @@ def main(
     
     # Get the domain randomization function specific to Go1
     randomizer_fn = registry.get_domain_randomizer(env_name)
+
+    unroll_fn = generate_unroll
+    if noise_type == "lp":
+        unroll_fn = functools.partial(
+            generate_stateful_unroll,
+            order=order, cutoff_freq=cutoff_freq
+        )
 
     # 4. Setup Network Factory
     # Helper to create PPO networks based on config
@@ -114,6 +128,7 @@ def main(
         policy_params_fn=policy_params_fn,
         wrap_env_fn=wrapper.wrap_for_brax_training,
         randomization_fn=randomizer_fn,
+        unroll_fn=unroll_fn,
         **train_params
     )
 
