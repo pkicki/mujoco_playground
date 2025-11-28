@@ -32,8 +32,9 @@ def main(
     noise_type: str = "lp",
     cutoff_freq: float = 3.0,
     order: int = 2,
-    entropy_cost: float = 0e-4,
+    entropy_cost: float = 1e-2,
     unroll_length: int = 20,
+    target_kl: float = 0.0,
     env_name: str = "Go1JoystickFlatTerrain",
     results_dir: str = "./results",
     seed: int = 1,
@@ -48,9 +49,10 @@ def main(
     ppo_config.entropy_cost = entropy_cost
     ppo_config.seed = seed
     ppo_config.unroll_length = unroll_length
+    ppo_config.target_kl = target_kl
     
     # Create a unique experiment name
-    group_name = f"{env_name}_{noise_type}_ent{entropy_cost}_ul{unroll_length}"
+    group_name = f"{env_name}_{noise_type}_ent{entropy_cost}_ul{unroll_length}_tarkl{target_kl}"
     if noise_type == "lp":
         group_name += f"_cf{cutoff_freq}_o{order}"
     run_name = f"{group_name}_seed{seed}"
