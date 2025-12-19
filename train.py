@@ -35,6 +35,10 @@ def main(
     cutoff_freq: float = 3.0,
     order: int = 2,
     hermite: bool = False,
+    substeps: int = 8,
+    vmax: float = 10.0,
+    kp: float = 20.0,
+    kd: float = 0.5,
     entropy_cost: float = 1e-2,
     unroll_length: int = 20,
     target_kl: float = 0.0,
@@ -59,7 +63,7 @@ def main(
     if noise_type == "lp":
         group_name += f"_cf{cutoff_freq}_o{order}"
     if hermite:
-        group_name += "_hermite"
+        group_name += f"_hermite_sub{substeps}_vmax{vmax}_kp{kp}_kd{kd}"
     run_name = f"{group_name}_seed{seed}"
     ckpt_dir = os.path.join(os.path.dirname(__file__), "checkpoints", run_name)
     os.makedirs(ckpt_dir, exist_ok=True)
@@ -78,6 +82,10 @@ def main(
             "env_name": env_name,
             "noise_type": noise_type,
             "hermite": hermite,
+            "substeps": substeps,
+            "vmax": vmax,
+            "kp": kp,
+            "kd": kd,
         },
     )
 
@@ -88,8 +96,8 @@ def main(
     eval_env = registry.load(env_name, config=env_cfg)
 
     if hermite:
-        env = HermiteSplineWrapper(env, substeps=8, vmax=10.0, kp=20.0, kd=0.5)
-        eval_env = HermiteSplineWrapper(eval_env, substeps=8, vmax=10.0, kp=20.0, kd=0.5)
+        env = HermiteSplineWrapper(env, substeps=substeps, vmax=vmax, kp=kp, kd=kd)
+        eval_env = HermiteSplineWrapper(eval_env, substeps=substeps, vmax=vmax, kp=kp, kd=kd)
     
     # Get the domain randomization function specific to Go1
     randomizer_fn = registry.get_domain_randomizer(env_name)
