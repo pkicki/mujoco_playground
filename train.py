@@ -3,6 +3,8 @@ import datetime
 import functools
 import json
 
+from hermite_spline import HermiteSplineWrapper
+
 # Set necessary environment variables for JAX/MuJoCo performance
 os.environ["XLA_FLAGS"] = (
     os.environ.get("XLA_FLAGS", "") + " --xla_gpu_triton_gemm_any=True"
@@ -32,6 +34,7 @@ def main(
     noise_type: str = "lp",
     cutoff_freq: float = 3.0,
     order: int = 2,
+    hermite: bool = False,
     entropy_cost: float = 1e-2,
     unroll_length: int = 20,
     target_kl: float = 0.0,
@@ -55,6 +58,8 @@ def main(
     group_name = f"{env_name}_{noise_type}_ent{entropy_cost}_ul{unroll_length}_tarkl{target_kl}"
     if noise_type == "lp":
         group_name += f"_cf{cutoff_freq}_o{order}"
+    if hermite:
+        group_name += "_hermite"
     run_name = f"{group_name}_seed{seed}"
     ckpt_dir = os.path.join(os.path.dirname(__file__), "checkpoints", run_name)
     os.makedirs(ckpt_dir, exist_ok=True)
@@ -72,7 +77,8 @@ def main(
             "ppo_config": ppo_config.to_dict(),
             "env_name": env_name,
             "noise_type": noise_type,
-        }
+            "hermite": hermite,
+        },
     )
 
     # 3. Setup Environment and Randomization
@@ -80,6 +86,10 @@ def main(
     env = registry.load(env_name, config=env_cfg)
     # Load the evaluation environment (usually same config, but distinct instance)
     eval_env = registry.load(env_name, config=env_cfg)
+
+    if hermite:
+        env = HermiteSplineWrapper(env, substeps=8, vmax=10.0, kp=20.0, kd=0.5)
+        eval_env = HermiteSplineWrapper(eval_env, substeps=8, vmax=10.0, kp=20.0, kd=0.5)
     
     # Get the domain randomization function specific to Go1
     randomizer_fn = registry.get_domain_randomizer(env_name)

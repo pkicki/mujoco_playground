@@ -227,7 +227,8 @@ class BraxDomainRandomizationVmapWrapper(Wrapper):
 
   @contextlib.contextmanager
   def v_env_fn(self, mjx_model: mjx.Model):
-    env = self.env.unwrapped
+    #env = self.env.unwrapped
+    env = self.env
     old_mjx_model = env._mjx_model
     try:
       env.unwrapped._mjx_model = mjx_model
