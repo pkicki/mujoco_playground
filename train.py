@@ -1,3 +1,4 @@
+import logging
 import os
 import datetime
 import functools
@@ -13,6 +14,8 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 os.environ["MUJOCO_GL"] = "egl"
 
 import jax
+#jax.config.update('jax_disable_jit', True)
+
 import wandb
 from orbax import checkpoint as ocp
 from flax.training import orbax_utils
@@ -28,10 +31,13 @@ from mujoco_playground.config import locomotion_params
 
 from experiment_launcher import single_experiment, run_experiment
 
+log = logging.getLogger(__name__)
+DEBUG = len([k for k in os.environ.keys() if "DEBUG" in k.upper()]) > 0
+
 @single_experiment
 def main(
-    #noise_type: str = "white",
-    noise_type: str = "lp",
+    noise_type: str = "white",
+    #noise_type: str = "lp",
     cutoff_freq: float = 3.0,
     order: int = 2,
     hermite: bool = False,
@@ -43,17 +49,23 @@ def main(
     unroll_length: int = 20,
     target_kl: float = 0.0,
     env_name: str = "Go1JoystickFlatTerrain",
+    #env_name: str = "WalkerWalk",
     results_dir: str = "./results",
     seed: int = 1,
 ):
     # Load default environment config and PPO hyperparameters
     env_cfg = registry.get_default_config(env_name)
     ppo_config = locomotion_params.brax_ppo_config(env_name)
+
+    env_cfg.command_config.a = [1.5, 0., 0.]
+    env_cfg.episode_length = 40
     
     # Customize training parameters if desired
     ppo_config.num_timesteps = 100_000_000
     ppo_config.num_evals = 50
     ppo_config.entropy_cost = entropy_cost
+    if DEBUG:
+        ppo_config.num_evals = 1
     ppo_config.seed = seed
     ppo_config.unroll_length = unroll_length
     ppo_config.target_kl = target_kl
@@ -87,6 +99,7 @@ def main(
             "kp": kp,
             "kd": kd,
         },
+        mode="disabled" if DEBUG else "online",
     )
 
     # 3. Setup Environment and Randomization
