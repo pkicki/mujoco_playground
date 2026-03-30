@@ -47,8 +47,9 @@ def default_config() -> config_dict.ConfigDict:
               robot_target_qpos=0.3,
           )
       ),
-      impl='jax',
-      nconmax=24 * 2048,
+      impl='warp',
+      naconmax=24 * 2048,
+      naccdmax=24 * 2048,
       njmax=128,
   )
   return config
@@ -130,7 +131,8 @@ class PandaPickCube(panda.PandaBase):
         qvel=jp.zeros(self._mjx_model.nv, dtype=float),
         ctrl=self._init_ctrl,
         impl=self._mjx_model.impl.value,
-        nconmax=self._config.nconmax,
+        naconmax=self._config.naconmax,
+        naccdmax=self._config.naccdmax,
         njmax=self._config.njmax,
     )
 

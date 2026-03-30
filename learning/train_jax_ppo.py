@@ -39,8 +39,15 @@ from mujoco_playground import wrapper
 from mujoco_playground.config import dm_control_suite_params
 from mujoco_playground.config import locomotion_params
 from mujoco_playground.config import manipulation_params
-import tensorboardX
-import wandb
+try:
+  import tensorboardX
+except ImportError:
+  tensorboardX = None
+
+try:
+  import wandb
+except ImportError:
+  wandb = None
 
 
 xla_flags = os.environ.get("XLA_FLAGS", "")
@@ -68,6 +75,11 @@ _ENV_NAME = flags.DEFINE_string(
     f"Name of the environment. One of {', '.join(registry.ALL_ENVS)}",
 )
 _IMPL = flags.DEFINE_enum("impl", "jax", ["jax", "warp"], "MJX implementation")
+_PLAYGROUND_CONFIG_OVERRIDES = flags.DEFINE_string(
+    "playground_config_overrides",
+    None,
+    "Overrides for the playground env config.",
+)
 _VISION = flags.DEFINE_boolean("vision", False, "Use vision input")
 _LOAD_CHECKPOINT_PATH = flags.DEFINE_string(
     "load_checkpoint_path", None, "Path to load checkpoint from"
@@ -118,7 +130,7 @@ _NUM_EVAL_ENVS = flags.DEFINE_integer(
 _BATCH_SIZE = flags.DEFINE_integer("batch_size", 256, "Batch size")
 _MAX_GRAD_NORM = flags.DEFINE_float("max_grad_norm", 1.0, "Max grad norm")
 _CLIPPING_EPSILON = flags.DEFINE_float(
-    "clipping_epsilon", 0.2, "Clipping epsilon for PPO"
+    "clipping_epsilon", 0.3, "Clipping epsilon for PPO"
 )
 _POLICY_HIDDEN_LAYER_SIZES = flags.DEFINE_list(
     "policy_hidden_layer_sizes",
@@ -160,6 +172,13 @@ _TRAINING_METRICS_STEPS = flags.DEFINE_integer(
     1_000_000,
     "Number of steps between logging training metrics. Increase if training"
     " experiences slowdown.",
+)
+_WARP_KERNEL_CACHE_DIR = flags.DEFINE_string(
+    "warp_kernel_cache_dir", None,
+    "Directory for caching compiled Warp kernels.",
+)
+_LOGDIR = flags.DEFINE_string(
+    "logdir", None, "Directory for logging."
 )
 
 
@@ -203,9 +222,12 @@ def main(argv):
 
   del argv
 
+  if _WARP_KERNEL_CACHE_DIR.value is not None:
+    import warp as wp  # pylint: disable=g-import-not-at-top
+    wp.config.kernel_cache_dir = _WARP_KERNEL_CACHE_DIR.value
+
   # Load environment configuration
   env_cfg = registry.get_default_config(_ENV_NAME.value)
-  env_cfg["impl"] = _IMPL.value
 
   ppo_params = get_rl_config(_ENV_NAME.value)
 
@@ -257,10 +279,17 @@ def main(argv):
     ppo_params.network_factory.policy_obs_key = _POLICY_OBS_KEY.value
   if _VALUE_OBS_KEY.present:
     ppo_params.network_factory.value_obs_key = _VALUE_OBS_KEY.value
+
+  env_cfg_overrides = {"impl": _IMPL.value}
   if _VISION.value:
-    env_cfg.vision = True
-    env_cfg.vision_config.render_batch_size = ppo_params.num_envs
-  env = registry.load(_ENV_NAME.value, config=env_cfg)
+    env_cfg_overrides["vision"] = True
+    env_cfg_overrides["vision_config.nworld"] = ppo_params.num_envs
+  if _PLAYGROUND_CONFIG_OVERRIDES.value is not None:
+    env_cfg_overrides.update(json.loads(_PLAYGROUND_CONFIG_OVERRIDES.value))
+
+  env = registry.load(
+      _ENV_NAME.value, config=env_cfg, config_overrides=env_cfg_overrides
+  )
   if _RUN_EVALS.present:
     ppo_params.run_evals = _RUN_EVALS.value
   if _LOG_TRAINING_METRICS.present:
@@ -269,6 +298,8 @@ def main(argv):
     ppo_params.training_metrics_steps = _TRAINING_METRICS_STEPS.value
 
   print(f"Environment Config:\n{env_cfg}")
+  if env_cfg_overrides:
+    print(f"Environment Config Overrides:\n{env_cfg_overrides}\n")
   print(f"PPO Training Parameters:\n{ppo_params}")
 
   # Generate unique experiment name
@@ -280,18 +311,24 @@ def main(argv):
   print(f"Experiment name: {exp_name}")
 
   # Set up logging directory
-  logdir = epath.Path("logs").resolve() / exp_name
+  logdir = epath.Path(_LOGDIR.value or "logs").resolve() / exp_name
   logdir.mkdir(parents=True, exist_ok=True)
   print(f"Logs are being stored in: {logdir}")
 
   # Initialize Weights & Biases if required
   if _USE_WANDB.value and not _PLAY_ONLY.value:
+    if wandb is None:
+      raise ImportError(
+          "wandb is required for --use_wandb. "
+          "Install via: pip install wandb"
+      )
     wandb.init(project="mjxrl", name=exp_name)
     wandb.config.update(env_cfg.to_dict())
     wandb.config.update({"env_name": _ENV_NAME.value})
 
   # Initialize TensorBoard if required
-  if _USE_TB.value and not _PLAY_ONLY.value:
+  writer = None
+  if _USE_TB.value and not _PLAY_ONLY.value and tensorboardX is not None:
     writer = tensorboardX.SummaryWriter(logdir)
 
   # Handle checkpoint loading
@@ -342,21 +379,7 @@ def main(argv):
         _ENV_NAME.value
     )
 
-  if _VISION.value:
-    env = wrapper.wrap_for_brax_training(
-        env,
-        vision=True,
-        num_vision_envs=env_cfg.vision_config.render_batch_size,
-        episode_length=ppo_params.episode_length,
-        action_repeat=ppo_params.action_repeat,
-        randomization_fn=training_params.get("randomization_fn"),
-    )
-
-  num_eval_envs = (
-      ppo_params.num_envs
-      if _VISION.value
-      else ppo_params.get("num_eval_envs", 128)
-  )
+  num_eval_envs = ppo_params.get("num_eval_envs", 128)
 
   if "num_eval_envs" in training_params:
     del training_params["num_eval_envs"]
@@ -368,8 +391,9 @@ def main(argv):
       seed=_SEED.value,
       restore_checkpoint_path=restore_checkpoint_path,
       save_checkpoint_path=ckpt_path,
-      wrap_env_fn=None if _VISION.value else wrapper.wrap_for_brax_training,
+      wrap_env_fn=wrapper.wrap_for_brax_training,
       num_eval_envs=num_eval_envs,
+      vision=_VISION.value,
   )
 
   times = [time.monotonic()]
@@ -383,7 +407,7 @@ def main(argv):
       wandb.log(metrics, step=num_steps)
 
     # Log to TensorBoard
-    if _USE_TB.value and not _PLAY_ONLY.value:
+    if _USE_TB.value and not _PLAY_ONLY.value and writer is not None:
       for key, value in metrics.items():
         writer.add_scalar(key, value, num_steps)
       writer.flush()
@@ -396,13 +420,14 @@ def main(argv):
             f" reward={metrics['episode/sum_reward']:.3f}"
         )
 
-  # Load evaluation environment.
-  eval_env = None
-  if not _VISION.value:
-    eval_env = registry.load(_ENV_NAME.value, config=env_cfg)
-  num_envs = 1
+  eval_env_overrides = dict(env_cfg_overrides)
   if _VISION.value:
-    num_envs = env_cfg.vision_config.render_batch_size
+    eval_env_overrides["vision_config.nworld"] = num_eval_envs
+  eval_env = registry.load(
+      _ENV_NAME.value,
+      config=registry.get_default_config(_ENV_NAME.value),
+      config_overrides=eval_env_overrides,
+  )
 
   policy_params_fn = lambda *args: None
   if _RSCOPE_ENVS.value:
@@ -410,7 +435,9 @@ def main(argv):
     from rscope import brax as rscope_utils
 
     if not _VISION.value:
-      rscope_env = registry.load(_ENV_NAME.value, config=env_cfg)
+      rscope_env = registry.load(
+          _ENV_NAME.value, config=env_cfg, config_overrides=env_cfg_overrides
+      )
       rscope_env = wrapper.wrap_for_brax_training(
           rscope_env,
           episode_length=ppo_params.episode_length,
@@ -432,7 +459,7 @@ def main(argv):
 
     def policy_params_fn(current_step, make_policy, params):  # pylint: disable=unused-argument
       rscope_handle.set_make_policy(make_policy)
-      rscope_handle.dump_rollout(params)
+      # rscope_handle.dump_rollout(params) # Disabled to prevent rendering slice crash
 
   # Train or load the model
   make_inference_fn, params, _ = train_fn(  # pylint: disable=no-value-for-parameter
@@ -453,53 +480,71 @@ def main(argv):
   inference_fn = make_inference_fn(params, deterministic=True)
   jit_inference_fn = jax.jit(inference_fn)
 
-  # Run evaluation rollouts.
-  def do_rollout(rng, state):
-    empty_data = state.data.__class__(
-        **{k: None for k in state.data.__annotations__}
-    )  # pytype: disable=attribute-error
-    empty_traj = state.__class__(**{k: None for k in state.__annotations__})  # pytype: disable=attribute-error
-    empty_traj = empty_traj.replace(data=empty_data)
+  infer_env_overrides = dict(env_cfg_overrides)
+  if _VISION.value:
+    infer_env_overrides["vision_config.nworld"] = _NUM_VIDEOS.value
+  infer_env = registry.load(
+      _ENV_NAME.value,
+      config=registry.get_default_config(_ENV_NAME.value),
+      config_overrides=infer_env_overrides,
+  )
 
-    def step(carry, _):
-      state, rng = carry
-      rng, act_key = jax.random.split(rng)
-      act = jit_inference_fn(state.obs, act_key)[0]
-      state = eval_env.step(state, act)
-      traj_data = empty_traj.tree_replace({
-          "data.qpos": state.data.qpos,
-          "data.qvel": state.data.qvel,
-          "data.time": state.data.time,
-          "data.ctrl": state.data.ctrl,
-          "data.mocap_pos": state.data.mocap_pos,
-          "data.mocap_quat": state.data.mocap_quat,
-          "data.xfrc_applied": state.data.xfrc_applied,
-      })
-      if _VISION.value:
-        traj_data = jax.tree_util.tree_map(lambda x: x[0], traj_data)
-      return (state, rng), traj_data
+  # Run evaluation rollouts matching how training handles batched environments.
+  wrapped_infer_env = wrapper.wrap_for_brax_training(
+      infer_env,
+      episode_length=ppo_params.episode_length,
+      action_repeat=ppo_params.get("action_repeat", 1),
+  )
 
+  rng = jax.random.split(jax.random.PRNGKey(_SEED.value), _NUM_VIDEOS.value)
+  reset_states = jax.jit(wrapped_infer_env.reset)(rng)
+
+  empty_data = reset_states.data.__class__(
+      **{k: None for k in reset_states.data.__annotations__}
+  )  # pytype: disable=attribute-error
+  empty_traj = reset_states.__class__(
+      **{k: None for k in reset_states.__annotations__}
+  )  # pytype: disable=attribute-error
+  empty_traj = empty_traj.replace(data=empty_data)
+
+  def step(carry, _):
+    state, rng = carry
+    rng, act_key = jax.random.split(rng)
+    act_keys = jax.random.split(act_key, _NUM_VIDEOS.value)
+    act = jax.vmap(jit_inference_fn)(state.obs, act_keys)[0]
+    state = wrapped_infer_env.step(state, act)
+    traj_data = empty_traj.tree_replace({
+        "data.qpos": state.data.qpos,
+        "data.qvel": state.data.qvel,
+        "data.time": state.data.time,
+        "data.ctrl": state.data.ctrl,
+        "data.mocap_pos": state.data.mocap_pos,
+        "data.mocap_quat": state.data.mocap_quat,
+        "data.xfrc_applied": state.data.xfrc_applied,
+    })
+    return (state, rng), traj_data
+
+  @jax.jit
+  def do_rollout(state, rng):
     _, traj = jax.lax.scan(
-        step, (state, rng), None, length=_EPISODE_LENGTH.value
+        step, (state, rng), None, length=ppo_params.episode_length
     )
     return traj
 
-  rng = jax.random.split(jax.random.PRNGKey(_SEED.value), _NUM_VIDEOS.value)
-  reset_states = jax.jit(jax.vmap(eval_env.reset))(rng)
-  if _VISION.value:
-    reset_states = jax.tree_util.tree_map(lambda x: x[0], reset_states)
-  traj_stacked = jax.jit(jax.vmap(do_rollout))(rng, reset_states)
+  traj_stacked = do_rollout(reset_states, jax.random.PRNGKey(_SEED.value + 1))
+  # traj_stacked has shape (time, nworld, ...), swap to (nworld, time, ...).
+  traj_stacked = jax.tree.map(lambda x: jp.moveaxis(x, 0, 1), traj_stacked)
   trajectories = [None] * _NUM_VIDEOS.value
   for i in range(_NUM_VIDEOS.value):
     t = jax.tree.map(lambda x, i=i: x[i], traj_stacked)
     trajectories[i] = [
         jax.tree.map(lambda x, j=j: x[j], t)
-        for j in range(_EPISODE_LENGTH.value)
+        for j in range(ppo_params.episode_length)
     ]
 
   # Render and save the rollout.
   render_every = 2
-  fps = 1.0 / eval_env.dt / render_every
+  fps = 1.0 / infer_env.dt / render_every
   print(f"FPS for rendering: {fps}")
   scene_option = mujoco.MjvOption()
   scene_option.flags[mujoco.mjtVisFlag.mjVIS_TRANSPARENT] = False
@@ -507,12 +552,17 @@ def main(argv):
   scene_option.flags[mujoco.mjtVisFlag.mjVIS_CONTACTFORCE] = False
   for i, rollout in enumerate(trajectories):
     traj = rollout[::render_every]
-    frames = eval_env.render(
+    frames = infer_env.render(
         traj, height=480, width=640, scene_option=scene_option
     )
-    media.write_video(f"rollout{i}.mp4", frames, fps=fps)
-    print(f"Rollout video saved as 'rollout{i}.mp4'.")
+    media.write_video(logdir / f"rollout{i}.mp4", frames, fps=fps)
+    print(f"Rollout video saved as '{logdir}/rollout{i}.mp4'.")
+
+
+def run():
+  """Entry point for uv/pip script."""
+  app.run(main)
 
 
 if __name__ == "__main__":
-  app.run(main)
+  run()

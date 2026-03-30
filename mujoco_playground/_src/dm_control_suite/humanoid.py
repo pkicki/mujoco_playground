@@ -42,8 +42,8 @@ def default_config() -> config_dict.ConfigDict:
       episode_length=1000,
       action_repeat=1,
       vision=False,
-      impl="jax",
-      nconmax=200_000,
+      impl="warp",
+      naconmax=200_000,
       njmax=250,
   )
 
@@ -94,7 +94,7 @@ class Humanoid(mjx_env.MjxEnv):
     data = mjx_env.make_data(
         self.mj_model,
         impl=self.mjx_model.impl.value,
-        nconmax=self._config.nconmax,
+        naconmax=self._config.naconmax,
         njmax=self._config.njmax,
     )
     data = mjx.forward(self.mjx_model, data)

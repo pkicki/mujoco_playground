@@ -48,8 +48,8 @@ def default_config() -> config_dict.ConfigDict:
               robot_target_qpos=0.3,
           )
       ),
-      impl="jax",
-      nconmax=12 * 2048,
+      impl="warp",
+      naconmax=12 * 2048,
       njmax=96,
   )
 
@@ -118,7 +118,7 @@ class PandaOpenCabinet(panda.PandaBase):
         qvel=jp.zeros(self._mjx_model.nv),
         ctrl=init_ctrl,
         impl=self._mjx_model.impl.value,
-        nconmax=self._config.nconmax,
+        naconmax=self._config.naconmax,
         njmax=self._config.njmax,
     )
 

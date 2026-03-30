@@ -67,9 +67,9 @@ def default_config() -> config_dict.ConfigDict:
           pert_duration_steps=[1, 100],
           pert_wait_steps=[60, 150],
       ),
-      impl='jax',
-      nconmax=30 * 8192,
-      njmax=128,
+      impl='warp',
+      naconmax=30 * 8192,
+      njmax=160,
   )
 
 
@@ -137,7 +137,7 @@ class CubeReorient(leap_hand_base.LeapHandEnv):
         mocap_pos=self._init_mpos,
         mocap_quat=goal_quat,
         impl=self._mjx_model.impl.value,
-        nconmax=self._config.nconmax,
+        naconmax=self._config.naconmax,
         njmax=self._config.njmax,
     )
 
@@ -423,7 +423,7 @@ class CubeReorient(leap_hand_base.LeapHandEnv):
     cube_goal_ori = self.get_cube_goal_orientation(data)
     quat_diff = math.quat_mul(cube_ori, math.quat_inv(cube_goal_ori))
     quat_diff = math.normalize(quat_diff)
-    return 2.0 * jp.asin(jp.clip(math.norm(quat_diff[1:]), a_max=1.0))
+    return 2.0 * jp.asin(jp.clip(math.norm(quat_diff[1:]), max=1.0))
 
   def _reward_cube_orientation(self, data: mjx.Data) -> jax.Array:
     ori_error = self._cube_orientation_error(data)

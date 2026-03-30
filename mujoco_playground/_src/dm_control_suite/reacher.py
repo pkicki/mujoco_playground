@@ -39,8 +39,8 @@ def default_config() -> config_dict.ConfigDict:
       episode_length=1000,
       action_repeat=1,
       vision=False,
-      impl="jax",
-      nconmax=0,
+      impl="warp",
+      naconmax=0,
       njmax=0,
   )
 
@@ -113,7 +113,7 @@ class Reacher(mjx_env.MjxEnv):
         self.mj_model,
         qpos=qpos,
         impl=self.mjx_model.impl.value,
-        nconmax=self._config.nconmax,
+        naconmax=self._config.naconmax,
         njmax=self._config.njmax,
     )
     data = mjx.forward(self.mjx_model, data)

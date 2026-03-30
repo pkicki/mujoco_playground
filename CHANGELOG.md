@@ -2,7 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
-## Next release
+## [0.2.0] - 2026-03-16
+
+- Added vision-based PPO training configs for `CartpoleBalance` and
+  `PandaPickCubeCartesian` with tuned hyperparameters.
+- Update vision notebooks to use MuJoCo Warp.
+- Default MuJoCo implementation for all envs is now MuJoCo Warp.
+- Renamed deprecated `nconmax` / `nccdmax` config fields to `naconmax` /
+  `naccdmax` across all environments, matching the updated MJX API.
+
+## [0.1.0] - 2026-01-07
 
 - Pass through the [MuJoCo Warp](https://github.com/google-deepmind/mujoco_warp)
   (MjWarp) implementation to MJX, so that MuJoCo Playground environments can
@@ -16,6 +25,7 @@ All notable changes to this project will be documented in this file.
 - Update AutoResetWrapper to allow full resets on done. Fixes #179. Also
   provides a means for doing curriculum learning via
   `state.info['AutoResetWrapper_done_count']`, see #140.
+- Update dependencies to use `mujoco>=3.4` and `warp-lang>=1.11`.
 
 ## [0.0.5] - 2025-06-23
 

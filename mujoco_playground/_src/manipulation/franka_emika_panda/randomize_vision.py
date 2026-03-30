@@ -58,7 +58,7 @@ def perturb_orientation(
 def domain_randomize(
     mjx_model: mjx.Model, num_worlds: int
 ) -> Tuple[mjx.Model, mjx.Model]:
-  """Tile the necessary axes for the Madrona BatchRenderer."""
+  """Tile the necessary axes for the renderer."""
   mj_model = pick_cartesian.PandaPickCubeCartesian().mj_model
   floor_geom_id = mj_model.geom('floor').id
   box_geom_id = mj_model.geom('box').id
@@ -113,10 +113,10 @@ def domain_randomize(
         + mat_offset
     )
     geom_matid = geom_matid.at[box_geom_id].set(
-        -2
+        -1
     )  # Use the above randomized colors
-    geom_matid = geom_matid.at[floor_geom_id].set(-2)
-    geom_matid = geom_matid.at[strip_geom_id].set(-2)
+    geom_matid = geom_matid.at[floor_geom_id].set(-1)
+    geom_matid = geom_matid.at[strip_geom_id].set(-1)
 
     #### Cameras ####
     key_pos, key_ori, key = jax.random.split(key, 3)
@@ -148,10 +148,10 @@ def domain_randomize(
     # Whether to cast shadows
     light_castshadow = jax.random.bernoulli(
         key_lsha, 0.75, shape=(nlight,)
-    ).astype(jp.float32)
+    ).astype(jp.bool_)
 
     # No need to randomize into specular lighting
-    light_type = jp.ones((nlight,))
+    light_type = jp.ones((nlight,), dtype=jp.int32)
 
     return (
         geom_rgba,

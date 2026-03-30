@@ -48,8 +48,8 @@ def default_config() -> config_dict.ConfigDict:
               peg_insertion_reward=8,
           )
       ),
-      impl="jax",
-      nconmax=24 * 1024,
+      impl="warp",
+      naconmax=24 * 1024,
       njmax=256,
   )
 
@@ -102,7 +102,7 @@ class SinglePegInsertion(aloha_base.AlohaEnv):
         qvel=jp.zeros(self._mjx_model.nv, dtype=float),
         ctrl=self._init_ctrl,
         impl=self._mjx_model.impl.value,
-        nconmax=self._config.nconmax,
+        naconmax=self._config.naconmax,
         njmax=self._config.njmax,
     )
 
