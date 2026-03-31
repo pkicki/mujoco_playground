@@ -345,12 +345,23 @@ class ContinuousDtCurriculumWrapper(Wrapper):
             )
             return (s_out, cum_r, done_early), None
 
+        # Strip the dt feature appended by the previous reset/step so that the
+        # initial scan carry has the same obs shape as what self.env.step()
+        # returns (base obs, without the dt scalar).  Without this, the first
+        # body call would try to jp.where between obs of shape (N,) and (N+1,),
+        # raising a broadcast error.
+        if isinstance(state.obs, dict):
+            inner_obs = {ky: v[:-1] for ky, v in state.obs.items()}
+        else:
+            inner_obs = state.obs[:-1]
+        inner_state = state.replace(obs=inner_obs)
+
         # k_max_scan is a Python int → scan length is a compile-time constant.
         # Changing k_max_sample between phases does NOT change the scan length,
         # so the compiled lax.scan graph is shared across all mini-phases.
         (final_state, total_reward, _), _ = jax.lax.scan(
             body,
-            (state, jp.zeros(()), jp.zeros((), dtype=jp.bool_)),
+            (inner_state, jp.zeros(()), jp.zeros((), dtype=jp.bool_)),
             jp.arange(self._k_max_scan),
         )
 
