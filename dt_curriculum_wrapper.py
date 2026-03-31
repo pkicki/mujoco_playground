@@ -25,8 +25,8 @@ ContinuousDtCurriculumWrapper
     Continuous dt curriculum: at every episode reset a real-valued multiplier
     k_float is drawn from a truncated log-uniform (or linear-uniform)
     distribution over [k_min, k_max_sample], then rounded to the nearest
-    integer k.  The env is stepped k times via jax.lax.scan with reward
-    masking.  The sampling upper bound k_max_sample is annealed per
+    integer k.  The env is stepped k times via a Python for-loop (unrolled at
+    trace time) with reward masking.  The sampling upper bound k_max_sample is annealed per
     mini-phase (captured as a JAX constant at instantiation), while
     k_max_scan (the static scan length) stays fixed so the compiled graph
     is shared across all mini-phases without full recompilation.
@@ -250,17 +250,20 @@ class ContinuousDtCurriculumWrapper(Wrapper):
     At each episode reset a real-valued multiplier is drawn from a truncated
     log-uniform (or linear-uniform) distribution over [k_min, k_max_sample],
     then rounded to the nearest integer k.  The base environment is then
-    stepped k times per wrapper step using jax.lax.scan with reward masking,
-    giving an effective control timestep of k × base_ctrl_dt.
+    stepped k times per wrapper step via a Python for-loop (unrolled at trace
+    time) with reward masking, giving an effective control timestep of
+    k × base_ctrl_dt.
 
     Design
     ------
     Two separate k bounds serve distinct roles:
 
       k_max_scan  (Python int, compile-time constant)
-          Static upper bound for jax.lax.scan.  Fixed across ALL curriculum
-          mini-phases so the scan graph is compiled once and reused, avoiding
-          expensive full recompilations between phases.
+          Static loop-unroll length.  Fixed across ALL curriculum mini-phases
+          so the compiled graph is shared, avoiding full recompilations between
+          phases.  A Python for-loop is used instead of jax.lax.scan to avoid
+          nested-scan shape conflicts with the inner jax.lax.scan inside
+          mjx_env.step (which caused MJX to split contact arrays by k_max_scan).
 
       k_max_sample  (float, captured as JAX constant per phase)
           Current upper bound for the sampling distribution.  Must satisfy
@@ -328,47 +331,45 @@ class ContinuousDtCurriculumWrapper(Wrapper):
     def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
         k = state.info["curriculum_k"]
 
-        def body(carry: tuple, i: jax.Array) -> tuple:
-            s, cum_r, done_early = carry
-            # Active if no done received yet AND within the sampled k
-            should_step = ~done_early & (i < k)
-            s_next = self.env.step(s, action)
-            # Accumulate reward only for active substeps
-            cum_r = cum_r + jp.where(should_step, s_next.reward, 0.0)
-            # Latch: once done in an active step, stop advancing
-            done_early = done_early | (
-                should_step & s_next.done.astype(jp.bool_)
-            )
-            # Advance state only for active substeps
-            s_out = jax.tree_util.tree_map(
-                lambda a, b: jp.where(should_step, a, b), s_next, s
-            )
-            return (s_out, cum_r, done_early), None
-
         # Strip the dt feature appended by the previous reset/step so that the
-        # initial scan carry has the same obs shape as what self.env.step()
-        # returns (base obs, without the dt scalar).  Without this, the first
-        # body call would try to jp.where between obs of shape (N,) and (N+1,),
-        # raising a broadcast error.
+        # initial carry has the same obs shape as what self.env.step() returns
+        # (base obs, without the dt scalar).  Without this, the first body
+        # iteration would jp.where between obs of shape (N,) and (N+1,).
         if isinstance(state.obs, dict):
             inner_obs = {ky: v[:-1] for ky, v in state.obs.items()}
         else:
             inner_obs = state.obs[:-1]
-        inner_state = state.replace(obs=inner_obs)
+        s_curr = state.replace(obs=inner_obs)
 
-        # k_max_scan is a Python int → scan length is a compile-time constant.
-        # Changing k_max_sample between phases does NOT change the scan length,
-        # so the compiled lax.scan graph is shared across all mini-phases.
-        (final_state, total_reward, _), _ = jax.lax.scan(
-            body,
-            (inner_state, jp.zeros(()), jp.zeros((), dtype=jp.bool_)),
-            jp.arange(self._k_max_scan),
-        )
+        cum_r = jp.zeros(())
+        done_early = jp.zeros((), dtype=jp.bool_)
 
-        final_state.info["curriculum_k"] = k
-        return final_state.replace(
-            obs=_augment(final_state.obs, self._dt_feat(k)),
-            reward=total_reward,
+        # Python for-loop unrolled at trace time.
+        # k_max_scan is a compile-time Python int so the compiled graph depends
+        # only on k_max_scan (not k_max_sample), preserving the JIT-cache
+        # sharing property across mini-phases.  Using a Python loop instead of
+        # jax.lax.scan avoids the nested-scan shape conflict that arises when
+        # the outer scan's xs (jp.arange(k_max_scan)) interacts with the inner
+        # jax.lax.scan inside mjx_env.step, which caused MJX to see contact
+        # arrays with the wrong leading dimension (nconmax split by k_max_scan).
+        for i in range(self._k_max_scan):
+            should_step = ~done_early & (jp.array(i, dtype=jp.int32) < k)
+            s_next = self.env.step(s_curr, action)
+            # Accumulate reward only for active substeps.
+            cum_r = cum_r + jp.where(should_step, s_next.reward, 0.0)
+            # Latch: once done in an active step, stop advancing.
+            done_early = done_early | (
+                should_step & s_next.done.astype(jp.bool_)
+            )
+            # Advance state only for active substeps.
+            s_curr = jax.tree_util.tree_map(
+                lambda a, b: jp.where(should_step, a, b), s_next, s_curr
+            )
+
+        s_curr.info["curriculum_k"] = k
+        return s_curr.replace(
+            obs=_augment(s_curr.obs, self._dt_feat(k)),
+            reward=cum_r,
         )
 
     # ---------------------------------------------------------------- helpers
