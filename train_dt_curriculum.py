@@ -110,7 +110,7 @@ BASE_DISCOUNTING = 0.97      # per fine-step discount
 BASE_REWARD_SCALING = 1.0
 
 # One W&B / console evaluation every this many cumulative wrapper steps.
-EVAL_INTERVAL = 20_000_000
+EVAL_INTERVAL = 200_000
 
 # Continuous curriculum settings.
 # k_max_scan is the FIXED static scan length shared across all mini-phases.

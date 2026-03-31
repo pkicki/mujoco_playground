@@ -52,7 +52,7 @@ DEBUG = bool(os.environ.get("DEBUG", ""))
 DT_FINE = 0.02    # target dt – the one we're training on
 DT_COARSE = 0.08  # coarsest dt in the curriculum (only used for normalisation)
 
-EVAL_INTERVAL = 20_000_000  # one evaluation every this many wrapper steps
+EVAL_INTERVAL = 200_000  # one evaluation every this many wrapper steps
 
 
 @single_experiment
